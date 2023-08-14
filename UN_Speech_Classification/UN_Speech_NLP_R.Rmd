@@ -47,7 +47,7 @@ head(un_speeches)
 ## Reading and processing the data from HumanCoding.csv
 
 We will start by reading the data from HumanCoding.csv using the read.csv() function in R. This will allow us to store the data in a data frame and begin processing it for our analysis. 
-
+from class
 ```{r message=FALSE, warning=FALSE}
 # install.packages("pacman")
 pacman::p_load(tidyverse,
