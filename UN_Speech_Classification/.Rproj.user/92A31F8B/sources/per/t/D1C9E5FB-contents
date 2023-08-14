@@ -1,0 +1,289 @@
+---
+title: "UN_Speech_NLP_R"
+author: "Takuya Nakatsu"
+date: "2023-08-02"
+output: html_document
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Project Description
+
+This project is being conducted in a graduate school lab of computational social science with a focus on text analysis in political science. The goal of this project is to utilize the UN General Debate corpus (un_speeches.csv) to train a dictionary and apply Naive Bayes, Random Forest, and Support Vector Machine methods on annotated data (HumanCoding.csv), with a focus on the 'UN' class (as indicated in the 'coding' column of HumanCoding.csv). 
+
+Our project steps:
+- Reading and processing the data from HumanCoding.csv
+- Performing a train-test split on the data
+- Pre-processing the speeches
+- Implementing the aforementioned methods, including hyperparameter tuning
+- Evaluating the methods on the test dataset
+- Comparing the performance of the different methods
+- Making predictions on the complete corpus (un_speeches.csv) and visualizing the results
+
+# Data Preparation and Preprocessing
+## Reading and processing the data from HumanCoding.csv
+
+We will start by reading the data from HumanCoding.csv using the read.csv() function in R. This will allow us to store the data in a data frame and begin processing it for our analysis. 
+
+```{r}
+library(readr)
+library(dplyr)
+
+# Load the data
+human_coding <- read_csv('files/HumanCoding.csv')
+un_speeches <- read_csv('files/un_speeches.csv')
+
+# Display the first few rows of each dataset
+head(human_coding)
+head(un_speeches)
+```
+
+# Data Preparation and Preprocessing
+## Reading and processing the data from HumanCoding.csv
+
+We will start by reading the data from HumanCoding.csv using the read.csv() function in R. This will allow us to store the data in a data frame and begin processing it for our analysis. 
+
+```{r}
+# install.packages("pacman")
+pacman::p_load(tidyverse,
+               tidymodels,
+               naivebayes,
+               discrim)
+# read the files
+un_speeches_sentences <- read.csv("files/HumanCoding.csv") %>%
+  dplyr::select(text)
+un_speeches_annotated <- read.csv("files/HumanCoding.csv")
+
+```
+
+```{r}
+# install the necessary packages
+install.packages("tm")
+install.packages("SnowballC")
+# Load the necessary libraries
+library(tm)
+library(SnowballC)
+
+# Define a function to clean the text
+clean_text <- function(text) {
+  # Convert to lowercase
+  text <- tolower(text)
+
+  # Remove punctuation
+  text <- removePunctuation(text)
+
+  # Remove numbers
+  text <- removeNumbers(text)
+
+  # Remove stopwords
+  text <- removeWords(text, stopwords('en'))
+
+  # Stem the words
+  text <- wordStem(text)
+
+  return(text)
+}
+
+
+# Clean the 'text' column in the human_coding dataset
+human_coding$clean_text <- sapply(human_coding$text, clean_text)
+
+# Display the dataset
+head(human_coding)
+```
+
+## Train-test split
+
+```{r}
+set.seed(202305)
+un_speeches_split <- initial_split(un_speeches_annotated, prop = 0.7, strata = coding)
+train_data <- training(un_speeches_split)
+test_data <- testing(un_speeches_split)
+
+#Preprocessing the training dataset
+text_rec <- recipes::recipe(coding ~ text, train_data) %>%
+  recipes::step_mutate(text = stringr::str_replace_all(text, "[[:digit:]]", "")) %>% 
+  textrecipes::step_tokenize(text) %>%
+  textrecipes::step_stopwords(text, language = "english") %>%
+  textrecipes::step_stem(text, options = list(language = "english")) %>%
+  textrecipes::step_tokenfilter(text, max_tokens = 500) %>%
+  textrecipes::step_tfidf(text)
+
+```
+
+```{r}
+# Install and load the necessary library
+install.packages('caTools')
+library(caTools)
+
+# Set the seed for reproducibility
+set.seed(42)
+
+# Perform the train-test split
+split <- sample.split(human_coding$clean_text, SplitRatio = 0.8)
+train_set <- subset(human_coding, split == TRUE)
+test_set <- subset(human_coding, split == FALSE)
+```
+
+## Vectorize the Text
+
+```{r}
+# Create a document-term matrix for the training set
+dtm_train <- DocumentTermMatrix(Corpus(VectorSource(train_set$clean_text)))
+
+# Create a document-term matrix for the test set
+dtm_test <- DocumentTermMatrix(Corpus(VectorSource(test_set$clean_text)), control = list(dictionary = Terms(dtm_train)))
+```
+
+# Machine Learning 
+## Implement the Naive Bayes Method
+
+```{r}
+#Define the naive Bayes model
+nb_mod <- parsnip::naive_Bayes(Laplace = 0.05, smoothness = 0.5) %>% 
+  parsnip::set_mode("classification") %>%
+  parsnip::set_engine("naivebayes")
+
+# Define Workflow
+un_speeches_wflow <- 
+  workflows::workflow() %>%
+  workflows::add_model(nb_mod) %>%
+  workflows::add_recipe(text_rec)
+
+fitted_model <- parsnip::fit(un_speeches_wflow, data = train_data)
+
+predictions <- fitted_model %>%
+  predict(new_data = test_data) # (9)
+
+test_data_pred <- test_data %>%
+  dplyr::bind_cols(predictions) %>%
+  dplyr::rename(pred = `.pred_class`) %>%
+  dplyr::mutate(coding = as.factor(coding))
+conf_matrix <- test_data_pred %>% conf_mat(truth = coding, estimate = pred)
+
+autoplot(conf_matrix, type = "heatmap")
+```
+
+```{r}
+# Load the necessary library
+library(e1071)
+
+# Train the Naive Bayes model
+nb_model <- naiveBayes(as.matrix(dtm_train), as.factor(train_set$coding))
+
+# Make predictions on the test set
+nb_predictions <- predict(nb_model, newdata = as.matrix(dtm_test))
+
+# Print the confusion matrix
+table(test_set$coding, nb_predictions)
+```
+
+## Implement the Support Vector Machine Method
+
+```{r}
+# Train the Support Vector Machine model
+svm_model <- svm(as.matrix(dtm_train), as.factor(train_set$coding), kernel = 'linear')
+
+# Make predictions on the test set
+svm_predictions <- predict(svm_model, newdata = as.matrix(dtm_test))
+
+# Print the confusion matrix
+table(test_set$coding, svm_predictions)
+``` 
+
+## Implement the Random Forest Method
+
+```{r}
+# Install and load the necessary library
+install.packages("randomForest")
+library(randomForest)
+
+# Train the Random Forest model
+rf_model <- randomForest(as.matrix(dtm_train), as.factor(train_set$coding))
+
+# Make predictions on the test set
+rf_predictions <- predict(rf_model, newdata = as.matrix(dtm_test))
+
+# Print the confusion matrix
+table(test_set$coding, rf_predictions)
+```
+
+## Compare the Performance of the Different Methods
+
+```{r}
+# Load the necessary library
+library(caret)
+
+# Check the lengths of the vectors
+print(length(nb_predictions))
+print(length(svm_predictions))
+print(length(rf_predictions))
+print(length(test_set$coding))
+
+# Check the structure of the data
+str(nb_predictions)
+str(svm_predictions)
+str(rf_predictions)
+str(test_set$coding)
+
+# Calculate the accuracy of the Naive Bayes model
+nb_accuracy <- postResample(pred = nb_predictions, obs = test_set$coding)
+
+# Calculate the accuracy of the Support Vector Machine model
+svm_accuracy <- postResample(pred = svm_predictions, obs = test_set$coding)
+
+# Calculate the accuracy of the Random Forest model
+rf_accuracy <- postResample(pred = rf_predictions, obs = test_set$coding)
+
+# Print the accuracy of each model
+list(Naive_Bayes = nb_accuracy, Support_Vector_Machine = svm_accuracy, Random_Forest = rf_accuracy)
+```
+
+
+Make Predictions on the Complet Corpus
+
+```{r}
+# Clean the 'speech' column in the un_speeches dataset
+un_speeches$clean_speech <- sapply(un_speeches$speech, clean_text)
+
+# Create a document-term matrix for the un_speeches dataset
+dtm_un_speeches <- DocumentTermMatrix(Corpus(VectorSource(un_speeches$clean_speech)), control = list(dictionary = Terms(dtm_train)))
+
+# Make predictions on the complete corpus using the Naive Bayes model
+un_speeches$nb_predictions <- predict(nb_model, newdata = as.matrix(dtm_un_speeches))
+
+# Make predictions on the complete corpus using the Support Vector Machine model
+un_speeches$svm_predictions <- predict(svm_model, newdata = as.matrix(dtm_un_speeches))
+
+# Make predictions on the complete corpus using the Random Forest model
+un_speeches$rf_predictions <- predict(rf_model, newdata = as.matrix(dtm_un_speeches))
+```
+
+#Visualize the Results
+
+```{r}
+# Load the necessary library
+library(ggplot2)
+
+# Count the number of 'UN' predictions by each model
+nb_un_predictions <- sum(un_speeches$nb_predictions == 'UN')
+svm_un_predictions <- sum(un_speeches$svm_predictions == 'UN')
+rf_un_predictions <- sum(un_speeches$rf_predictions == 'UN')
+
+# Create a data frame for the bar plot
+predictions_df <- data.frame(Model = c('Naive Bayes', 'Support Vector Machine', 'Random Forest'),
+                             UN_Predictions = c(nb_un_predictions, svm_un_predictions, rf_un_predictions))
+
+# Create a bar plot
+ggplot(predictions_df, aes(x = Model, y = UN_Predictions, fill = Model)) +
+  geom_bar(stat = 'identity') +
+  theme_minimal() +
+  labs(x = 'Model', y = 'Number of UN Predictions', title = 'Number of UN Predictions by Each Model') +
+  theme(legend.position = 'none')
+```
+

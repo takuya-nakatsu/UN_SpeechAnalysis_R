@@ -1,0 +1,5 @@
+"0","set.seed(202305)"
+"0","un_speeches_split <- initial_split(un_speeches_annotated, prop = 0.7, strata = coding)"
+"2","Error in initial_split(un_speeches_annotated, prop = 0.7, strata = coding) : 
+  could not find function ""initial_split""
+"
